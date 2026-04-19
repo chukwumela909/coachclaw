@@ -5,13 +5,17 @@ import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronLeft, Share2, Copy, Check, Users } from "lucide-react";
+import { VoiceChat } from "@/components/VoiceChat";
 import "tldraw/tldraw.css";
+
+/* ── License key (auto-detected by tldraw from env, but we pass explicitly too) */
+const LICENSE_KEY = process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY;
 
 /* ── Lazy-load tldraw + sync (no SSR) ───────────────────────────── */
 const TldrawLocal = dynamic(
   () => import("tldraw").then((mod) => {
     const { Tldraw } = mod;
-    return { default: (props: { persistenceKey: string }) => <Tldraw persistenceKey={props.persistenceKey} /> };
+    return { default: (props: { persistenceKey: string }) => <Tldraw persistenceKey={props.persistenceKey} licenseKey={LICENSE_KEY} /> };
   }),
   { ssr: false }
 );
@@ -22,7 +26,7 @@ const TldrawMultiplayer = dynamic(
       ([{ Tldraw }, { useSyncDemo }]) => {
         function Multiplayer({ roomId }: { roomId: string }) {
           const store = useSyncDemo({ roomId });
-          return <Tldraw store={store} />;
+          return <Tldraw store={store} licenseKey={LICENSE_KEY} />;
         }
         return { default: Multiplayer };
       }
@@ -135,6 +139,13 @@ function WorkspaceContent() {
         <TldrawLocal persistenceKey="coachclaw-workspace" />
       )}
 
+      {/* Top-right: Mic toggle next to tldraw people menu */}
+      {roomId && (
+        <div className="fixed top-2.5 right-[120px] z-[500]">
+          <VoiceChat roomId={roomId} />
+        </div>
+      )}
+
       {/* Bottom-left: Dashboard link */}
       <Link
         href="/dashboard"
@@ -144,7 +155,7 @@ function WorkspaceContent() {
         <span className="text-[13px] font-medium">Dashboard</span>
       </Link>
 
-      {/* Bottom-right: Share button */}
+      {/* Bottom-right: Share */}
       <div className="fixed bottom-3 right-3 z-[500] flex items-center gap-2">
         {roomId && (
           <div className="flex items-center gap-1.5 h-[36px] px-3 rounded-[10px] bg-[#0099ff]/10 text-[#0099ff] text-[12px] font-medium">
