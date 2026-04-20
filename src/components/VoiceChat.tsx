@@ -7,8 +7,9 @@ const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
   { urls: "stun:stun2.l.google.com:19302" },
-  { urls: "stun:stun3.l.google.com:19302" },
 ];
+
+const POLL_INTERVAL = 1000; // poll every 1s
 
 type PeerState = {
   pc: RTCPeerConnection;
@@ -24,10 +25,11 @@ export function VoiceChat({ roomId }: { roomId: string }) {
   const myId = useRef(`v-${Math.random().toString(36).slice(2, 10)}`);
   const streamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef(new Map<string, PeerState>());
-  const esRef = useRef<EventSource | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const connectedRef = useRef(false);
+  const knownPeersRef = useRef(new Set<string>());
 
-  /* ── send WebRTC signal via API ──────────────────────────────── */
+  /* ── send a signal to a remote peer via API ──────────────────── */
   const sendSignal = useCallback(
     async (to: string, type: string, data: unknown) => {
       try {
@@ -35,8 +37,9 @@ export function VoiceChat({ roomId }: { roomId: string }) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            action: "signal",
             room: roomId,
-            from: myId.current,
+            peer: myId.current,
             to,
             type,
             data,
@@ -49,7 +52,7 @@ export function VoiceChat({ roomId }: { roomId: string }) {
     [roomId]
   );
 
-  /* ── remove a peer connection ────────────────────────────────── */
+  /* ── remove a peer ───────────────────────────────────────────── */
   const removePeer = useCallback((id: string) => {
     const p = peersRef.current.get(id);
     if (!p) return;
@@ -57,47 +60,47 @@ export function VoiceChat({ roomId }: { roomId: string }) {
     p.audioEl.srcObject = null;
     p.audioEl.remove();
     peersRef.current.delete(id);
+    knownPeersRef.current.delete(id);
   }, []);
 
   /* ── create RTCPeerConnection for a remote peer ──────────────── */
   const createPC = useCallback(
-    (remoteId: string): RTCPeerConnection => {
+    (remoteId: string): PeerState => {
       const existing = peersRef.current.get(remoteId);
-      if (existing) return existing.pc;
+      if (existing) return existing;
 
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
-      // Attach local tracks
+      // Add local audio tracks
       if (streamRef.current) {
         for (const track of streamRef.current.getTracks()) {
           pc.addTrack(track, streamRef.current);
         }
       }
 
-      // Create audio element for remote audio
+      // Audio element for remote audio
       const audioEl = document.createElement("audio");
       audioEl.autoplay = true;
       audioEl.setAttribute("playsinline", "");
-      // Temporarily muted to satisfy autoplay, unmuted once we get audio
-      audioEl.muted = true;
       document.body.appendChild(audioEl);
 
+      // When we receive remote audio
       pc.ontrack = (e) => {
         const remoteStream = e.streams[0] ?? new MediaStream([e.track]);
         audioEl.srcObject = remoteStream;
-        // Unmute and play — should succeed because stream has audio
-        audioEl.muted = false;
         audioEl.play().catch(() => {
-          // Autoplay still blocked — retry on next user gesture
+          // Retry on next user interaction
           const resume = () => {
-            audioEl.muted = false;
             audioEl.play().catch(() => {});
             document.removeEventListener("click", resume);
+            document.removeEventListener("touchstart", resume);
           };
           document.addEventListener("click", resume, { once: true });
+          document.addEventListener("touchstart", resume, { once: true });
         });
       };
 
+      // Send ICE candidates to remote peer
       pc.onicecandidate = (e) => {
         if (e.candidate) {
           sendSignal(remoteId, "ice-candidate", e.candidate.toJSON());
@@ -105,31 +108,38 @@ export function VoiceChat({ roomId }: { roomId: string }) {
       };
 
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+        const s = pc.connectionState;
+        if (s === "failed" || s === "closed" || s === "disconnected") {
           removePeer(remoteId);
         }
       };
 
-      const state: PeerState = { pc, audioEl, candidateQueue: [], makingOffer: false };
+      const state: PeerState = {
+        pc,
+        audioEl,
+        candidateQueue: [],
+        makingOffer: false,
+      };
       peersRef.current.set(remoteId, state);
-      return pc;
+      return state;
     },
     [sendSignal, removePeer]
   );
 
-  /* ── send an offer to a specific peer ────────────────────────── */
+  /* ── send offer to a peer ────────────────────────────────────── */
   const sendOfferTo = useCallback(
     async (remoteId: string) => {
-      const pc = createPC(remoteId);
-      const state = peersRef.current.get(remoteId)!;
+      const state = createPC(remoteId);
       state.makingOffer = true;
       try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
+        const offer = await state.pc.createOffer();
+        await state.pc.setLocalDescription(offer);
         await sendSignal(remoteId, "offer", {
-          type: pc.localDescription!.type,
-          sdp: pc.localDescription!.sdp,
+          type: state.pc.localDescription!.type,
+          sdp: state.pc.localDescription!.sdp,
         });
+      } catch (err) {
+        console.error("Failed to create offer:", err);
       } finally {
         state.makingOffer = false;
       }
@@ -137,87 +147,36 @@ export function VoiceChat({ roomId }: { roomId: string }) {
     [createPC, sendSignal]
   );
 
-  /* ── flush queued ICE candidates ─────────────────────────────── */
-  const flushCandidates = useCallback(async (state: PeerState) => {
-    for (const c of state.candidateQueue) {
-      try {
-        await state.pc.addIceCandidate(new RTCIceCandidate(c));
-      } catch {
-        /* stale */
-      }
-    }
-    state.candidateQueue = [];
-  }, []);
-
-  /* ── teardown ────────────────────────────────────────────────── */
-  const cleanup = useCallback(() => {
-    esRef.current?.close();
-    esRef.current = null;
-    for (const [id] of peersRef.current) removePeer(id);
-    peersRef.current.clear();
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    connectedRef.current = false;
-    setConnected(false);
-    setMuted(true);
-  }, [removePeer]);
-
-  /* ── connect to signaling + get mic ──────────────────────────── */
-  const connect = useCallback(async () => {
-    try {
-      streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      return; // mic denied
-    }
-
-    // Start unmuted (user just clicked to speak)
-    connectedRef.current = true;
-    setConnected(true);
-    setMuted(false);
-
-    const es = new EventSource(
-      `/api/voice?room=${encodeURIComponent(roomId)}&peer=${myId.current}`
-    );
-    esRef.current = es;
-
-    /* ── existing peers in room → send offers to all ── */
-    es.addEventListener("peers", async (e) => {
-      const ids: string[] = JSON.parse(e.data);
-      for (const remoteId of ids) {
-        await sendOfferTo(remoteId);
-      }
-    });
-
-    /* ── new peer joined → we also send them an offer ── */
-    es.addEventListener("peer-joined", async (e) => {
-      const remoteId: string = JSON.parse(e.data);
-      await sendOfferTo(remoteId);
-    });
-
-    es.addEventListener("peer-left", (e) => {
-      removePeer(JSON.parse(e.data));
-    });
-
-    /* ── WebRTC signaling relay ── */
-    es.addEventListener("signal", async (e) => {
-      const { from, type, data } = JSON.parse(e.data);
-      const pc = createPC(from);
-      const state = peersRef.current.get(from)!;
+  /* ── process a received signal ───────────────────────────────── */
+  const handleSignal = useCallback(
+    async (signal: { from: string; type: string; data: unknown }) => {
+      const { from, type, data } = signal;
+      const state = createPC(from);
+      const { pc } = state;
 
       try {
         if (type === "offer") {
-          // Handle glare: if we're also making an offer, use polite peer logic
-          const offerCollision = state.makingOffer || pc.signalingState !== "stable";
-          // The peer with the "smaller" ID is polite (yields)
+          // Glare handling: both sides sent offers simultaneously
+          const collision =
+            state.makingOffer || pc.signalingState !== "stable";
           const polite = myId.current < from;
 
-          if (offerCollision && !polite) {
-            // Impolite peer ignores the incoming offer
+          if (collision && !polite) {
+            // Impolite peer: ignore the incoming offer
             return;
           }
 
-          await pc.setRemoteDescription(new RTCSessionDescription(data));
-          await flushCandidates(state);
+          await pc.setRemoteDescription(
+            new RTCSessionDescription(data as RTCSessionDescriptionInit)
+          );
+          // Flush queued ICE candidates
+          for (const c of state.candidateQueue) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(c));
+            } catch { /* stale */ }
+          }
+          state.candidateQueue = [];
+
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           await sendSignal(from, "answer", {
@@ -225,26 +184,118 @@ export function VoiceChat({ roomId }: { roomId: string }) {
             sdp: pc.localDescription!.sdp,
           });
         } else if (type === "answer") {
-          await pc.setRemoteDescription(new RTCSessionDescription(data));
-          await flushCandidates(state);
+          await pc.setRemoteDescription(
+            new RTCSessionDescription(data as RTCSessionDescriptionInit)
+          );
+          // Flush queued ICE candidates
+          for (const c of state.candidateQueue) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(c));
+            } catch { /* stale */ }
+          }
+          state.candidateQueue = [];
         } else if (type === "ice-candidate") {
           if (pc.remoteDescription) {
-            await pc.addIceCandidate(new RTCIceCandidate(data));
+            await pc.addIceCandidate(
+              new RTCIceCandidate(data as RTCIceCandidateInit)
+            );
           } else {
-            state.candidateQueue.push(data);
+            state.candidateQueue.push(data as RTCIceCandidateInit);
           }
         }
       } catch (err) {
         console.error("WebRTC signal error:", err);
       }
-    });
+    },
+    [createPC, sendSignal]
+  );
 
-    es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED) cleanup();
-    };
-  }, [roomId, createPC, sendOfferTo, sendSignal, removePeer, flushCandidates, cleanup]);
+  /* ── poll the signaling server ───────────────────────────────── */
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch("/api/voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "poll",
+          room: roomId,
+          peer: myId.current,
+        }),
+      });
 
-  /* ── toggle: first click connects, subsequent clicks mute/unmute */
+      if (!res.ok) return;
+
+      const { peers, signals } = (await res.json()) as {
+        peers: string[];
+        signals: { from: string; type: string; data: unknown }[];
+      };
+
+      // Detect new peers and send offers
+      for (const peerId of peers) {
+        if (!knownPeersRef.current.has(peerId)) {
+          knownPeersRef.current.add(peerId);
+          await sendOfferTo(peerId);
+        }
+      }
+
+      // Remove peers that disappeared
+      for (const known of knownPeersRef.current) {
+        if (!peers.includes(known)) {
+          removePeer(known);
+        }
+      }
+
+      // Process incoming signals
+      for (const signal of signals) {
+        // Ensure we know this peer
+        knownPeersRef.current.add(signal.from);
+        await handleSignal(signal);
+      }
+    } catch {
+      /* network error, retry next poll */
+    }
+  }, [roomId, sendOfferTo, removePeer, handleSignal]);
+
+  /* ── cleanup ─────────────────────────────────────────────────── */
+  const cleanup = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+    for (const [id] of peersRef.current) removePeer(id);
+    peersRef.current.clear();
+    knownPeersRef.current.clear();
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    connectedRef.current = false;
+    setConnected(false);
+    setMuted(true);
+  }, [removePeer]);
+
+  /* ── connect: get mic + start polling ────────────────────────── */
+  const connect = useCallback(async () => {
+    try {
+      streamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    } catch {
+      return; // mic denied
+    }
+
+    connectedRef.current = true;
+    setConnected(true);
+    setMuted(false);
+
+    // Start polling for peers and signals
+    await poll(); // immediate first poll
+    pollingRef.current = setInterval(poll, POLL_INTERVAL);
+  }, [poll]);
+
+  /* ── click handler ───────────────────────────────────────────── */
   const handleClick = useCallback(async () => {
     if (!connectedRef.current) {
       await connect();
@@ -260,7 +311,7 @@ export function VoiceChat({ roomId }: { roomId: string }) {
   /* cleanup on unmount */
   useEffect(() => () => cleanup(), [cleanup]);
 
-  /* ── UI — single mute/unmute toggle ──────────────────────────── */
+  /* ── UI ──────────────────────────────────────────────────────── */
   return (
     <button
       onClick={handleClick}

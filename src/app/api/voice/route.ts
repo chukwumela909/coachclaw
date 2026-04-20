@@ -1,120 +1,80 @@
 export const dynamic = "force-dynamic";
 
-/* ── In-memory peer registry per room ──────────────────────────── */
-type PeerInfo = {
-  controller: ReadableStreamDefaultController;
-  encoder: TextEncoder;
-  heartbeat: ReturnType<typeof setInterval>;
+/* ── In-memory signaling store ─────────────────────────────────── */
+type PeerEntry = {
+  lastSeen: number;
+  signals: { from: string; type: string; data: unknown }[];
 };
 
-const rooms = new Map<string, Map<string, PeerInfo>>();
+// room → peer → entry
+const rooms = new Map<string, Map<string, PeerEntry>>();
 
-function send(peer: PeerInfo, event: string, data: unknown) {
-  try {
-    peer.controller.enqueue(
-      peer.encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-    );
-  } catch {
-    /* controller already closed */
-  }
+const PEER_TIMEOUT = 15_000; // remove peers not seen for 15s
+
+function getRoom(roomId: string): Map<string, PeerEntry> {
+  if (!rooms.has(roomId)) rooms.set(roomId, new Map());
+  return rooms.get(roomId)!;
 }
 
-function removePeer(
-  roomId: string,
-  peerId: string,
-  room: Map<string, PeerInfo>
-) {
-  const info = room.get(peerId);
-  if (!info) return;
-  clearInterval(info.heartbeat);
-  try {
-    info.controller.close();
-  } catch {
-    /* already closed */
-  }
-  room.delete(peerId);
-  for (const [, p] of room) {
-    send(p, "peer-left", peerId);
+function pruneStale(room: Map<string, PeerEntry>, roomId: string) {
+  const now = Date.now();
+  for (const [id, entry] of room) {
+    if (now - entry.lastSeen > PEER_TIMEOUT) {
+      room.delete(id);
+    }
   }
   if (room.size === 0) rooms.delete(roomId);
 }
 
-/* ── GET  →  SSE stream for peer discovery + signal relay ──────── */
-export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const roomId = url.searchParams.get("room");
-  const peerId = url.searchParams.get("peer");
+/* ── Single POST endpoint with action field ────────────────────── */
+export async function POST(req: Request) {
+  const body = await req.json();
+  const { action, room: roomId, peer: peerId } = body;
 
   if (!roomId || !peerId) {
     return Response.json({ error: "Missing room or peer" }, { status: 400 });
   }
 
-  if (!rooms.has(roomId)) rooms.set(roomId, new Map());
-  const room = rooms.get(roomId)!;
-  const existingPeerIds = Array.from(room.keys());
+  const room = getRoom(roomId);
+  pruneStale(room, roomId);
 
-  let cleaned = false;
-  function cleanup() {
-    if (cleaned) return;
-    cleaned = true;
-    removePeer(roomId!, peerId!, room);
+  /* ── POLL: register/heartbeat + get peer list + drain signals ── */
+  if (action === "poll") {
+    // Upsert peer
+    if (!room.has(peerId)) {
+      room.set(peerId, { lastSeen: Date.now(), signals: [] });
+    }
+    const entry = room.get(peerId)!;
+    entry.lastSeen = Date.now();
+
+    // Drain pending signals
+    const signals = entry.signals.splice(0);
+
+    // Get other peer IDs
+    const peers = Array.from(room.keys()).filter((id) => id !== peerId);
+
+    return Response.json({ peers, signals });
   }
 
-  const stream = new ReadableStream({
-    start(controller) {
-      const encoder = new TextEncoder();
-      const heartbeat = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(": ping\n\n"));
-        } catch {
-          clearInterval(heartbeat);
-        }
-      }, 15_000);
+  /* ── SIGNAL: queue a WebRTC signal for a target peer ─────────── */
+  if (action === "signal") {
+    const { to, type, data } = body;
+    if (!to || !type) {
+      return Response.json({ error: "Missing to or type" }, { status: 400 });
+    }
 
-      const info: PeerInfo = { controller, encoder, heartbeat };
+    const target = room.get(to);
+    if (!target) {
+      return Response.json({ error: "Peer not found" }, { status: 404 });
+    }
 
-      // Tell the new peer who's already here
-      send(info, "peers", existingPeerIds);
+    // Cap queue size to prevent memory issues
+    if (target.signals.length < 200) {
+      target.signals.push({ from: peerId, type, data });
+    }
 
-      // Tell existing peers someone new arrived
-      for (const [, p] of room) {
-        send(p, "peer-joined", peerId);
-      }
-
-      room.set(peerId, info);
-    },
-    cancel() {
-      cleanup();
-    },
-  });
-
-  req.signal.addEventListener("abort", cleanup);
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      "X-Accel-Buffering": "no",
-    },
-  });
-}
-
-/* ── POST  →  relay a WebRTC signal to a specific peer ─────────── */
-export async function POST(req: Request) {
-  const body = await req.json();
-  const { room: roomId, from, to, type, data } = body;
-
-  if (!roomId || !from || !to || !type) {
-    return Response.json({ error: "Missing fields" }, { status: 400 });
+    return Response.json({ ok: true });
   }
 
-  const room = rooms.get(roomId);
-  if (!room) return Response.json({ error: "Room not found" }, { status: 404 });
-
-  const target = room.get(to);
-  if (!target)
-    return Response.json({ error: "Peer not found" }, { status: 404 });
-
-  send(target, "signal", { from, type, data });
-  return Response.json({ ok: true });
+  return Response.json({ error: "Unknown action" }, { status: 400 });
 }
