@@ -2,13 +2,29 @@
 
 import { useState, useRef, useEffect } from "react";
 
-// ── Minimal WebRTC voice chat test page ──
-// Uses ONLY BroadcastChannel for signaling (no server needed for same-browser test)
-// Open this page in TWO tabs with the same room name, click Connect in both
+// ── Voice chat test page ──
+// Supports BOTH same-browser (BroadcastChannel) AND cross-device (API polling)
+// Open in TWO tabs or on TWO devices with the same room name
 
-const STUN: RTCIceServer[] = [
+const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
+  // Free TURN relay for NAT traversal across different networks
+  {
+    urls: "turn:openrelay.metered.ca:80",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443?transport=tcp",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
 ];
 
 export default function VoiceTestPage() {
@@ -24,6 +40,10 @@ export default function VoiceTestPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const iceQueue = useRef<RTCIceCandidateInit[]>([]);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const knownPeersRef = useRef(new Set<string>());
+  const remoteIdRef = useRef<string | null>(null);
+  const roomRef = useRef("");
 
   const log = (msg: string) => {
     const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -36,9 +56,12 @@ export default function VoiceTestPage() {
     pcRef.current = null;
     bcRef.current?.close();
     bcRef.current = null;
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     iceQueue.current = [];
+    knownPeersRef.current.clear();
+    remoteIdRef.current = null;
     setState("idle");
     setMicOk(false);
     setRemoteAudio(false);
@@ -46,8 +69,22 @@ export default function VoiceTestPage() {
 
   useEffect(() => () => cleanup(), []);
 
+  // ── Send signal via both BroadcastChannel + API ──
+  const emitSignal = (to: string, type: string, data?: unknown) => {
+    const msg = { from: myId.current, to, type, data };
+    // Same-browser instant delivery
+    bcRef.current?.postMessage(msg);
+    // Cross-device via API
+    fetch("/api/voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "signal", room: roomRef.current, peer: myId.current, to, type, data }),
+    }).catch(() => {});
+  };
+
   const connect = async () => {
     cleanup();
+    roomRef.current = room;
     log(`My ID: ${myId.current}`);
     log("Getting microphone...");
     setState("getting-mic");
@@ -67,16 +104,12 @@ export default function VoiceTestPage() {
     }
 
     setState("waiting");
-    log("Opening BroadcastChannel for signaling...");
-
-    const bc = new BroadcastChannel(`voice-test-${room}`);
-    bcRef.current = bc;
 
     const createPC = (isOfferer: boolean) => {
       if (pcRef.current) return pcRef.current;
 
       log(`Creating PeerConnection (I am ${isOfferer ? "OFFERER" : "ANSWERER"})`);
-      const pc = new RTCPeerConnection({ iceServers: STUN });
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       pcRef.current = pc;
 
       // Add mic tracks to connection
@@ -112,10 +145,10 @@ export default function VoiceTestPage() {
       };
 
       pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          log(`Sending ICE candidate: ${e.candidate.candidate.slice(0, 50)}...`);
-          bc.postMessage({ from: myId.current, type: "ice", data: e.candidate.toJSON() });
-        } else {
+        if (e.candidate && remoteIdRef.current) {
+          log(`Sending ICE candidate: ${e.candidate.candidate.slice(0, 60)}...`);
+          emitSignal(remoteIdRef.current, "ice", e.candidate.toJSON());
+        } else if (!e.candidate) {
           log("ICE gathering complete");
         }
       };
@@ -131,7 +164,7 @@ export default function VoiceTestPage() {
           log("🎉 CONNECTED! You should hear audio now.");
         }
         if (pc.connectionState === "failed") {
-          log("❌ Connection FAILED");
+          log("❌ Connection FAILED — may need TURN server");
           setState("idle");
         }
       };
@@ -143,27 +176,25 @@ export default function VoiceTestPage() {
       return pc;
     };
 
-    // Track known peers to avoid re-negotiation loops
-    const knownPeers = new Set<string>();
-
-    // Handle incoming messages
-    bc.onmessage = async (e) => {
-      const msg = e.data;
-      if (msg.from === myId.current) return; // ignore own messages
+    // ── Handle any signal message (from BC or API) ──
+    const handleMessage = async (msg: { from: string; to?: string; type: string; data?: unknown }) => {
+      if (msg.from === myId.current) return;
+      if (msg.to && msg.to !== myId.current) return;
 
       if (msg.type === "hello" || msg.type === "hello-ack") {
-        // Already know this peer — ignore
-        if (knownPeers.has(msg.from)) return;
-        knownPeers.add(msg.from);
+        if (knownPeersRef.current.has(msg.from)) return;
+        knownPeersRef.current.add(msg.from);
+        remoteIdRef.current = msg.from;
 
         log(`Peer ${msg.from} discovered via ${msg.type}`);
 
-        // If they said hello (not ack), reply with ack so they discover us (no loop)
         if (msg.type === "hello") {
-          bc.postMessage({ from: myId.current, type: "hello-ack" });
+          // Reply with ack (via both channels)
+          const ack = { from: myId.current, type: "hello-ack" };
+          bcRef.current?.postMessage(ack);
+          // Also register via API poll so they see us
         }
 
-        // Deterministic: lower ID is the offerer
         if (myId.current < msg.from) {
           const pc = createPC(true);
           setState("connecting");
@@ -171,27 +202,28 @@ export default function VoiceTestPage() {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             log(`Sending OFFER (sdp length: ${offer.sdp?.length})`);
-            bc.postMessage({ from: myId.current, type: "offer", data: { type: offer.type, sdp: offer.sdp } });
+            emitSignal(msg.from, "offer", { type: offer.type, sdp: offer.sdp });
           } catch (err) {
             log(`❌ Create offer failed: ${err}`);
           }
         } else {
-          createPC(false); // pre-create, wait for their offer
+          createPC(false);
           log("Waiting for offer from peer...");
         }
         return;
       }
 
       if (msg.type === "offer") {
-        log(`Received OFFER from ${msg.from} (sdp length: ${msg.data.sdp?.length})`);
+        log(`Received OFFER from ${msg.from} (sdp length: ${(msg.data as { sdp?: string })?.sdp?.length})`);
+        remoteIdRef.current = msg.from;
+        knownPeersRef.current.add(msg.from);
         const pc = createPC(false);
         setState("connecting");
 
         try {
-          await pc.setRemoteDescription(new RTCSessionDescription(msg.data));
+          await pc.setRemoteDescription(new RTCSessionDescription(msg.data as RTCSessionDescriptionInit));
           log("Remote description set (offer)");
 
-          // Flush queued ICE candidates
           for (const c of iceQueue.current) {
             await pc.addIceCandidate(new RTCIceCandidate(c));
           }
@@ -200,7 +232,7 @@ export default function VoiceTestPage() {
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           log(`Sending ANSWER (sdp length: ${answer.sdp?.length})`);
-          bc.postMessage({ from: myId.current, type: "answer", data: { type: answer.type, sdp: answer.sdp } });
+          emitSignal(msg.from, "answer", { type: answer.type, sdp: answer.sdp });
         } catch (err) {
           log(`❌ Handle offer failed: ${err}`);
         }
@@ -213,7 +245,7 @@ export default function VoiceTestPage() {
         if (!pc) { log("No PC for answer"); return; }
 
         try {
-          await pc.setRemoteDescription(new RTCSessionDescription(msg.data));
+          await pc.setRemoteDescription(new RTCSessionDescription(msg.data as RTCSessionDescriptionInit));
           log("Remote description set (answer)");
 
           for (const c of iceQueue.current) {
@@ -230,25 +262,61 @@ export default function VoiceTestPage() {
         const pc = pcRef.current;
         if (pc?.remoteDescription) {
           try {
-            await pc.addIceCandidate(new RTCIceCandidate(msg.data));
+            await pc.addIceCandidate(new RTCIceCandidate(msg.data as RTCIceCandidateInit));
           } catch { /* stale */ }
         } else {
-          iceQueue.current.push(msg.data);
+          iceQueue.current.push(msg.data as RTCIceCandidateInit);
           log("Queued ICE candidate (no remote description yet)");
         }
       }
     };
 
-    // Announce presence
-    log("Sending hello...");
+    // ── BroadcastChannel — instant same-browser signaling ──
+    log("Opening BroadcastChannel + API polling...");
+    const bc = new BroadcastChannel(`voice-test-${room}`);
+    bcRef.current = bc;
+    bc.onmessage = (e) => handleMessage(e.data);
+
+    // ── API polling — cross-device signaling ──
+    const pollApi = async () => {
+      try {
+        const res = await fetch("/api/voice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "poll", room: roomRef.current, peer: myId.current }),
+        });
+        if (!res.ok) return;
+        const { peers, signals } = await res.json();
+
+        // Process signals first
+        for (const sig of signals) {
+          await handleMessage(sig);
+        }
+
+        // Discover new peers from API
+        for (const peerId of (peers as string[])) {
+          if (!knownPeersRef.current.has(peerId)) {
+            log(`API discovered peer: ${peerId}`);
+            await handleMessage({ from: peerId, type: "hello" });
+          }
+        }
+      } catch { /* retry */ }
+    };
+
+    // Announce on both channels
     bc.postMessage({ from: myId.current, type: "hello" });
+    log("Sent hello on BroadcastChannel");
+
+    await pollApi(); // immediate first poll
+    pollRef.current = setInterval(pollApi, 1500);
+    log("API polling started (1.5s interval)");
   };
 
   return (
     <div style={{ fontFamily: "monospace", padding: 20, maxWidth: 700, margin: "0 auto" }}>
       <h1 style={{ fontSize: 20, marginBottom: 10 }}>Voice Chat Test</h1>
       <p style={{ color: "#888", fontSize: 13, marginBottom: 20 }}>
-        Open this page in TWO browser tabs. Enter the same room name. Click Connect in both.
+        Open this page in TWO browser tabs (same device) or on TWO devices. Enter the same room name. Click Connect in both.
       </p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
