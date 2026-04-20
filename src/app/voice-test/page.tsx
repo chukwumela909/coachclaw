@@ -294,11 +294,11 @@ export default function VoiceTestPage() {
         }
 
         const json = await res.json();
-        const { peers, signals, instance } = json;
+        const { peers, signals, storage } = json;
 
         // Log every poll response so we can debug
         if (pollCount <= 5 || (peers as string[]).length > 0 || (signals as unknown[]).length > 0) {
-          log(`API poll #${pollCount}: inst=${instance} peers=[${(peers as string[]).join(",")}] signals=${(signals as unknown[]).length}`);
+          log(`API poll #${pollCount}: storage=${storage} peers=[${(peers as string[]).join(",")}] signals=${(signals as unknown[]).length}`);
         }
 
         // Process signals first

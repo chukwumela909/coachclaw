@@ -1,98 +1,70 @@
+﻿import { connectDB } from "@/lib/db/mongoose";
+import { VoicePeer, VoiceSignal } from "@/models/VoicePeer";
+
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-/* ── In-memory signaling store (survives HMR via globalThis) ───── */
-type PeerEntry = {
-  lastSeen: number;
-  signals: { from: string; type: string; data: unknown }[];
-};
+const PEER_TIMEOUT_MS = 15_000;
 
-// room → peer → entry — persisted on globalThis so Turbopack HMR doesn't wipe it
-const globalForVoice = globalThis as unknown as {
-  __voiceRooms?: Map<string, Map<string, PeerEntry>>;
-  __voiceInstanceId?: string;
-};
-const rooms = (globalForVoice.__voiceRooms ??= new Map());
-const INSTANCE_ID = (globalForVoice.__voiceInstanceId ??=
-  `${process.pid}-${Math.random().toString(36).slice(2, 6)}`);
-
-const PEER_TIMEOUT = 15_000;
-
-function getRoom(roomId: string): Map<string, PeerEntry> {
-  if (!rooms.has(roomId)) rooms.set(roomId, new Map());
-  return rooms.get(roomId)!;
-}
-
-function pruneStale(room: Map<string, PeerEntry>, roomId: string) {
-  const now = Date.now();
-  for (const [id, entry] of room) {
-    if (now - entry.lastSeen > PEER_TIMEOUT) {
-      room.delete(id);
-    }
-  }
-  if (room.size === 0) rooms.delete(roomId);
-}
-
-/* ── GET: debug endpoint — visit /api/voice in browser ─────────── */
 export async function GET() {
-  const debug: Record<string, { peers: string[]; signalCounts: Record<string, number> }> = {};
-  for (const [roomId, room] of rooms) {
-    const peers: string[] = [];
-    const signalCounts: Record<string, number> = {};
-    for (const [peerId, entry] of room) {
-      peers.push(peerId);
-      signalCounts[peerId] = entry.signals.length;
+  try {
+    await connectDB();
+    const cutoff = new Date(Date.now() - PEER_TIMEOUT_MS);
+    await VoicePeer.deleteMany({ lastSeen: { $lt: cutoff } });
+    const all = await VoicePeer.find({}, { room: 1, peer: 1, signals: 1, _id: 0 }).lean();
+    const debug: Record<string, { peers: string[]; signalCounts: Record<string, number> }> = {};
+    for (const doc of all) {
+      const r = debug[doc.room] ?? (debug[doc.room] = { peers: [], signalCounts: {} });
+      r.peers.push(doc.peer);
+      r.signalCounts[doc.peer] = doc.signals.length;
     }
-    debug[roomId] = { peers, signalCounts };
+    return Response.json({ storage: "mongodb", rooms: debug, totalRooms: Object.keys(debug).length });
+  } catch (err) {
+    return Response.json({ error: "DB error", message: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
-  return Response.json({ instance: INSTANCE_ID, rooms: debug, totalRooms: rooms.size });
 }
 
-/* ── POST: poll + signal ───────────────────────────────────────── */
 export async function POST(req: Request) {
-  const body = await req.json();
-  const { action, room: roomId, peer: peerId } = body;
+  let body: { action?: string; room?: string; peer?: string; to?: string; type?: string; data?: unknown };
+  try { body = await req.json(); } catch { return Response.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  if (!roomId || !peerId) {
-    return Response.json({ error: "Missing room or peer" }, { status: 400 });
+  const { action, room, peer } = body;
+  if (!room || !peer) return Response.json({ error: "Missing room or peer" }, { status: 400 });
+
+  try { await connectDB(); } catch (err) {
+    return Response.json({ error: "DB connection failed", message: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 
-  const room = getRoom(roomId);
-  pruneStale(room, roomId);
+  const cutoff = new Date(Date.now() - PEER_TIMEOUT_MS);
 
-  /* ── POLL ── */
   if (action === "poll") {
-    if (!room.has(peerId)) {
-      room.set(peerId, { lastSeen: Date.now(), signals: [] });
-    }
-    const entry = room.get(peerId)!;
-    entry.lastSeen = Date.now();
-
-    const signals = entry.signals.splice(0);
-    const peers = Array.from(room.keys()).filter((id) => id !== peerId);
-
-    console.log(`[Voice API] poll room=${roomId} peer=${peerId.slice(0, 6)} peers=[${peers.map((p) => p.slice(0, 6)).join(",")}] signals=${signals.length}`);
-
-    return Response.json({ instance: INSTANCE_ID, peers, signals });
+    const doc = await VoicePeer.findOneAndUpdate(
+      { room, peer },
+      { $set: { lastSeen: new Date(), signals: [] } },
+      { upsert: true, new: false, setDefaultsOnInsert: true }
+    ).lean();
+    const signals: VoiceSignal[] = doc?.signals ?? [];
+    await VoicePeer.deleteMany({ room, lastSeen: { $lt: cutoff } });
+    const others = await VoicePeer.find(
+      { room, peer: { $ne: peer }, lastSeen: { $gte: cutoff } },
+      { peer: 1, _id: 0 }
+    ).lean();
+    return Response.json({ storage: "mongodb", peers: others.map((p) => p.peer), signals });
   }
 
-  /* ── SIGNAL ── */
   if (action === "signal") {
     const { to, type, data } = body;
-    if (!to || !type) {
-      return Response.json({ error: "Missing to or type" }, { status: 400 });
-    }
+    if (!to || !type) return Response.json({ error: "Missing to or type" }, { status: 400 });
+    const result = await VoicePeer.updateOne(
+      { room, peer: to, lastSeen: { $gte: cutoff } },
+      { $push: { signals: { $each: [{ from: peer, type, data }], $slice: -200 } } }
+    );
+    if (result.matchedCount === 0) return Response.json({ error: "Peer not found" }, { status: 404 });
+    return Response.json({ ok: true });
+  }
 
-    const target = room.get(to);
-    if (!target) {
-      console.log(`[Voice API] signal ${type} target ${to.slice(0, 6)} NOT FOUND in room ${roomId}`);
-      return Response.json({ error: "Peer not found" }, { status: 404 });
-    }
-
-    if (target.signals.length < 200) {
-      target.signals.push({ from: peerId, type, data });
-    }
-
-    console.log(`[Voice API] signal ${type} from=${peerId.slice(0, 6)} to=${to.slice(0, 6)}`);
+  if (action === "leave") {
+    await VoicePeer.deleteOne({ room, peer });
     return Response.json({ ok: true });
   }
 
