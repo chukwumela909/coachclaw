@@ -9,8 +9,11 @@ type PeerEntry = {
 // room → peer → entry — persisted on globalThis so Turbopack HMR doesn't wipe it
 const globalForVoice = globalThis as unknown as {
   __voiceRooms?: Map<string, Map<string, PeerEntry>>;
+  __voiceInstanceId?: string;
 };
 const rooms = (globalForVoice.__voiceRooms ??= new Map());
+const INSTANCE_ID = (globalForVoice.__voiceInstanceId ??=
+  `${process.pid}-${Math.random().toString(36).slice(2, 6)}`);
 
 const PEER_TIMEOUT = 15_000;
 
@@ -41,7 +44,7 @@ export async function GET() {
     }
     debug[roomId] = { peers, signalCounts };
   }
-  return Response.json({ rooms: debug, totalRooms: rooms.size });
+  return Response.json({ instance: INSTANCE_ID, rooms: debug, totalRooms: rooms.size });
 }
 
 /* ── POST: poll + signal ───────────────────────────────────────── */
@@ -69,7 +72,7 @@ export async function POST(req: Request) {
 
     console.log(`[Voice API] poll room=${roomId} peer=${peerId.slice(0, 6)} peers=[${peers.map((p) => p.slice(0, 6)).join(",")}] signals=${signals.length}`);
 
-    return Response.json({ peers, signals });
+    return Response.json({ instance: INSTANCE_ID, peers, signals });
   }
 
   /* ── SIGNAL ── */
