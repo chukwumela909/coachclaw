@@ -12,7 +12,7 @@ const globalForVoice = globalThis as unknown as {
 };
 const rooms = (globalForVoice.__voiceRooms ??= new Map());
 
-const PEER_TIMEOUT = 15_000; // remove peers not seen for 15s
+const PEER_TIMEOUT = 15_000;
 
 function getRoom(roomId: string): Map<string, PeerEntry> {
   if (!rooms.has(roomId)) rooms.set(roomId, new Map());
@@ -29,7 +29,22 @@ function pruneStale(room: Map<string, PeerEntry>, roomId: string) {
   if (room.size === 0) rooms.delete(roomId);
 }
 
-/* ── Single POST endpoint with action field ────────────────────── */
+/* ── GET: debug endpoint — visit /api/voice in browser ─────────── */
+export async function GET() {
+  const debug: Record<string, { peers: string[]; signalCounts: Record<string, number> }> = {};
+  for (const [roomId, room] of rooms) {
+    const peers: string[] = [];
+    const signalCounts: Record<string, number> = {};
+    for (const [peerId, entry] of room) {
+      peers.push(peerId);
+      signalCounts[peerId] = entry.signals.length;
+    }
+    debug[roomId] = { peers, signalCounts };
+  }
+  return Response.json({ rooms: debug, totalRooms: rooms.size });
+}
+
+/* ── POST: poll + signal ───────────────────────────────────────── */
 export async function POST(req: Request) {
   const body = await req.json();
   const { action, room: roomId, peer: peerId } = body;
@@ -41,25 +56,23 @@ export async function POST(req: Request) {
   const room = getRoom(roomId);
   pruneStale(room, roomId);
 
-  /* ── POLL: register/heartbeat + get peer list + drain signals ── */
+  /* ── POLL ── */
   if (action === "poll") {
-    // Upsert peer
     if (!room.has(peerId)) {
       room.set(peerId, { lastSeen: Date.now(), signals: [] });
     }
     const entry = room.get(peerId)!;
     entry.lastSeen = Date.now();
 
-    // Drain pending signals
     const signals = entry.signals.splice(0);
-
-    // Get other peer IDs
     const peers = Array.from(room.keys()).filter((id) => id !== peerId);
+
+    console.log(`[Voice API] poll room=${roomId} peer=${peerId.slice(0, 6)} peers=[${peers.map((p) => p.slice(0, 6)).join(",")}] signals=${signals.length}`);
 
     return Response.json({ peers, signals });
   }
 
-  /* ── SIGNAL: queue a WebRTC signal for a target peer ─────────── */
+  /* ── SIGNAL ── */
   if (action === "signal") {
     const { to, type, data } = body;
     if (!to || !type) {
@@ -68,14 +81,15 @@ export async function POST(req: Request) {
 
     const target = room.get(to);
     if (!target) {
+      console.log(`[Voice API] signal ${type} target ${to.slice(0, 6)} NOT FOUND in room ${roomId}`);
       return Response.json({ error: "Peer not found" }, { status: 404 });
     }
 
-    // Cap queue size to prevent memory issues
     if (target.signals.length < 200) {
       target.signals.push({ from: peerId, type, data });
     }
 
+    console.log(`[Voice API] signal ${type} from=${peerId.slice(0, 6)} to=${to.slice(0, 6)}`);
     return Response.json({ ok: true });
   }
 
