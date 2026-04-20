@@ -278,15 +278,28 @@ export default function VoiceTestPage() {
     bc.onmessage = (e) => handleMessage(e.data);
 
     // ── API polling — cross-device signaling ──
+    let pollCount = 0;
     const pollApi = async () => {
+      pollCount++;
       try {
         const res = await fetch("/api/voice", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "poll", room: roomRef.current, peer: myId.current }),
         });
-        if (!res.ok) return;
-        const { peers, signals } = await res.json();
+
+        if (!res.ok) {
+          log(`❌ API poll #${pollCount} failed: HTTP ${res.status} ${res.statusText}`);
+          return;
+        }
+
+        const json = await res.json();
+        const { peers, signals } = json;
+
+        // Log every poll response so we can debug
+        if (pollCount <= 5 || (peers as string[]).length > 0 || (signals as unknown[]).length > 0) {
+          log(`API poll #${pollCount}: peers=[${(peers as string[]).join(",")}] signals=${(signals as unknown[]).length}`);
+        }
 
         // Process signals first
         for (const sig of signals) {
@@ -296,11 +309,13 @@ export default function VoiceTestPage() {
         // Discover new peers from API
         for (const peerId of (peers as string[])) {
           if (!knownPeersRef.current.has(peerId)) {
-            log(`API discovered peer: ${peerId}`);
+            log(`🔍 API discovered NEW peer: ${peerId}`);
             await handleMessage({ from: peerId, type: "hello" });
           }
         }
-      } catch { /* retry */ }
+      } catch (err) {
+        log(`❌ API poll #${pollCount} error: ${err}`);
+      }
     };
 
     // Announce on both channels
