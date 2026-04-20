@@ -7,15 +7,16 @@ const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
   { urls: "stun:stun2.l.google.com:19302" },
+  { urls: "stun:stun3.l.google.com:19302" },
+  { urls: "stun:stun4.l.google.com:19302" },
 ];
 
-const POLL_INTERVAL = 1000; // poll every 1s
+const POLL_INTERVAL = 1000;
 
 type PeerState = {
   pc: RTCPeerConnection;
   audioEl: HTMLAudioElement;
   candidateQueue: RTCIceCandidateInit[];
-  makingOffer: boolean;
 };
 
 export function VoiceChat({ roomId }: { roomId: string }) {
@@ -81,11 +82,14 @@ export function VoiceChat({ roomId }: { roomId: string }) {
       // Audio element for remote audio
       const audioEl = document.createElement("audio");
       audioEl.autoplay = true;
+      audioEl.muted = false;
+      audioEl.volume = 1;
       audioEl.setAttribute("playsinline", "");
       document.body.appendChild(audioEl);
 
       // When we receive remote audio
       pc.ontrack = (e) => {
+        console.log(`[VoiceChat] ontrack from ${remoteId}, streams: ${e.streams.length}`);
         const remoteStream = e.streams[0] ?? new MediaStream([e.track]);
         audioEl.srcObject = remoteStream;
         audioEl.play().catch(() => {
@@ -107,9 +111,15 @@ export function VoiceChat({ roomId }: { roomId: string }) {
         }
       };
 
+      pc.oniceconnectionstatechange = () => {
+        console.log(`[VoiceChat] ICE state for ${remoteId}: ${pc.iceConnectionState}`);
+      };
+
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
-        if (s === "failed" || s === "closed" || s === "disconnected") {
+        console.log(`[VoiceChat] Connection state for ${remoteId}: ${s}`);
+        // Only remove on terminal states — "disconnected" is transient and self-heals
+        if (s === "failed" || s === "closed") {
           removePeer(remoteId);
         }
       };
@@ -118,7 +128,6 @@ export function VoiceChat({ roomId }: { roomId: string }) {
         pc,
         audioEl,
         candidateQueue: [],
-        makingOffer: false,
       };
       peersRef.current.set(remoteId, state);
       return state;
@@ -130,7 +139,6 @@ export function VoiceChat({ roomId }: { roomId: string }) {
   const sendOfferTo = useCallback(
     async (remoteId: string) => {
       const state = createPC(remoteId);
-      state.makingOffer = true;
       try {
         const offer = await state.pc.createOffer();
         await state.pc.setLocalDescription(offer);
@@ -138,10 +146,9 @@ export function VoiceChat({ roomId }: { roomId: string }) {
           type: state.pc.localDescription!.type,
           sdp: state.pc.localDescription!.sdp,
         });
+        console.log(`[VoiceChat] Sent offer to ${remoteId}`);
       } catch (err) {
-        console.error("Failed to create offer:", err);
-      } finally {
-        state.makingOffer = false;
+        console.error("[VoiceChat] Failed to create offer:", err);
       }
     },
     [createPC, sendSignal]
@@ -156,14 +163,17 @@ export function VoiceChat({ roomId }: { roomId: string }) {
 
       try {
         if (type === "offer") {
-          // Glare handling: both sides sent offers simultaneously
-          const collision =
-            state.makingOffer || pc.signalingState !== "stable";
-          const polite = myId.current < from;
-
-          if (collision && !polite) {
-            // Impolite peer: ignore the incoming offer
+          console.log(`[VoiceChat] Received offer from ${from}`);
+          // If we already have a local offer and we're the offerer (lower ID),
+          // ignore the incoming offer — we expect an answer instead.
+          if (pc.signalingState === "have-local-offer" && myId.current < from) {
+            console.log(`[VoiceChat] Ignoring offer from ${from} — I'm the offerer`);
             return;
+          }
+
+          // If we had our own pending offer but we're the answerer, rollback
+          if (pc.signalingState === "have-local-offer") {
+            await pc.setLocalDescription({ type: "rollback" });
           }
 
           await pc.setRemoteDescription(
@@ -173,7 +183,9 @@ export function VoiceChat({ roomId }: { roomId: string }) {
           for (const c of state.candidateQueue) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(c));
-            } catch { /* stale */ }
+            } catch {
+              /* stale candidate */
+            }
           }
           state.candidateQueue = [];
 
@@ -183,7 +195,13 @@ export function VoiceChat({ roomId }: { roomId: string }) {
             type: pc.localDescription!.type,
             sdp: pc.localDescription!.sdp,
           });
+          console.log(`[VoiceChat] Sent answer to ${from}`);
         } else if (type === "answer") {
+          console.log(`[VoiceChat] Received answer from ${from}`);
+          if (pc.signalingState !== "have-local-offer") {
+            console.log(`[VoiceChat] Ignoring answer — not in have-local-offer state`);
+            return;
+          }
           await pc.setRemoteDescription(
             new RTCSessionDescription(data as RTCSessionDescriptionInit)
           );
@@ -191,7 +209,9 @@ export function VoiceChat({ roomId }: { roomId: string }) {
           for (const c of state.candidateQueue) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(c));
-            } catch { /* stale */ }
+            } catch {
+              /* stale candidate */
+            }
           }
           state.candidateQueue = [];
         } else if (type === "ice-candidate") {
@@ -204,7 +224,7 @@ export function VoiceChat({ roomId }: { roomId: string }) {
           }
         }
       } catch (err) {
-        console.error("WebRTC signal error:", err);
+        console.error("[VoiceChat] Signal error:", err);
       }
     },
     [createPC, sendSignal]
@@ -230,31 +250,39 @@ export function VoiceChat({ roomId }: { roomId: string }) {
         signals: { from: string; type: string; data: unknown }[];
       };
 
-      // Detect new peers and send offers
+      // Process incoming signals FIRST (before sending new offers)
+      for (const signal of signals) {
+        knownPeersRef.current.add(signal.from);
+        await handleSignal(signal);
+      }
+
+      // Detect new peers — only the LOWER id sends the offer
       for (const peerId of peers) {
         if (!knownPeersRef.current.has(peerId)) {
           knownPeersRef.current.add(peerId);
-          await sendOfferTo(peerId);
+          if (myId.current < peerId) {
+            // I have the lower ID, so I'm the offerer
+            console.log(`[VoiceChat] Discovered peer ${peerId}, sending offer (I'm offerer)`);
+            await sendOfferTo(peerId);
+          } else {
+            // I have the higher ID, just create the PC and wait for their offer
+            console.log(`[VoiceChat] Discovered peer ${peerId}, waiting for their offer`);
+            createPC(peerId);
+          }
         }
       }
 
       // Remove peers that disappeared
-      for (const known of knownPeersRef.current) {
-        if (!peers.includes(known)) {
+      const currentPeers = new Set(peers);
+      for (const known of Array.from(knownPeersRef.current)) {
+        if (!currentPeers.has(known)) {
           removePeer(known);
         }
-      }
-
-      // Process incoming signals
-      for (const signal of signals) {
-        // Ensure we know this peer
-        knownPeersRef.current.add(signal.from);
-        await handleSignal(signal);
       }
     } catch {
       /* network error, retry next poll */
     }
-  }, [roomId, sendOfferTo, removePeer, handleSignal]);
+  }, [roomId, sendOfferTo, removePeer, handleSignal, createPC]);
 
   /* ── cleanup ─────────────────────────────────────────────────── */
   const cleanup = useCallback(() => {

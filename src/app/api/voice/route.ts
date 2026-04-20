@@ -1,13 +1,16 @@
 export const dynamic = "force-dynamic";
 
-/* ── In-memory signaling store ─────────────────────────────────── */
+/* ── In-memory signaling store (survives HMR via globalThis) ───── */
 type PeerEntry = {
   lastSeen: number;
   signals: { from: string; type: string; data: unknown }[];
 };
 
-// room → peer → entry
-const rooms = new Map<string, Map<string, PeerEntry>>();
+// room → peer → entry — persisted on globalThis so Turbopack HMR doesn't wipe it
+const globalForVoice = globalThis as unknown as {
+  __voiceRooms?: Map<string, Map<string, PeerEntry>>;
+};
+const rooms = (globalForVoice.__voiceRooms ??= new Map());
 
 const PEER_TIMEOUT = 15_000; // remove peers not seen for 15s
 
