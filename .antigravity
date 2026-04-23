@@ -1,0 +1,33 @@
+# Antigravity Agent Config
+
+## Skills
+
+Skills for this project are located in `.github/skills/`.
+Each skill folder contains a `SKILL.md` as the primary entry point.
+Some skills have additional reference files (e.g. `REFERENCE.md`, or a `rules/` subfolder).
+
+When the user invokes a skill by name (e.g. "use the frontend-design skill"),
+read the corresponding `.github/skills/<name>/SKILL.md` file first,
+then load any supplementary files in the same folder if referenced.
+
+### Available Skills
+
+| Skill Name                              | Entry Point                                                                 |
+|-----------------------------------------|-----------------------------------------------------------------------------|
+| `algorithmic-art`                       | `.github/skills/algorithmic-art/SKILL.md`                                   |
+| `brainstorm-ideas-new`                  | `.github/skills/brainstorm-ideas-new/SKILL.md`                              |
+| `code-audit`                            | `.github/skills/code-audit/SKILL.md`                                        |
+| `design-an-interface`                   | `.github/skills/design-an-interface/SKILL.md`                               |
+| `frontend-design`                       | `.github/skills/frontend-design/SKILL.md`                                   |
+| `grill-me`                              | `.github/skills/grill-me/SKILL.md`                                          |
+| `notedit-happy-skills-video-producer`   | `.github/skills/notedit-happy-skills-video-producer/SKILL.md`               |
+| `prd-to-plan`                           | `.github/skills/prd-to-plan/SKILL.md`                                       |
+| `tdd`                                   | `.github/skills/tdd/SKILL.md`                                               |
+| `write-a-prd`                           | `.github/skills/write-a-prd/SKILL.md`                                       |
+| `write-a-skill`                         | `.github/skills/write-a-skill/SKILL.md`                                     |
+
+## Notes
+
+- Always read skill files with `IsSkillFile: true` so they are treated as instructional context.
+- If a skill has a `rules/` subfolder, load relevant rule files alongside the main `SKILL.md`.
+- Skills use uppercase `SKILL.md` naming (not `.skill.md`).
