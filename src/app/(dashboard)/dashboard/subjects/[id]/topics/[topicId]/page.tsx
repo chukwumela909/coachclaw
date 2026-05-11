@@ -5,12 +5,35 @@ import { Activity, BookOpen, ChevronLeft, ClipboardCheck, Clock, FileText, PlayC
 
 import { requireUserId } from "@/lib/auth/require-user";
 import { connectDB } from "@/lib/db/mongoose";
+import { Resource } from "@/models/Resource";
 import { Subject } from "@/models/Subject";
 import { Topic } from "@/models/Topic";
 
 type PageProps = {
   params: Promise<{ id: string; topicId: string }>;
 };
+
+type ResourceRow = {
+  _id: unknown;
+  title: string;
+  extractedContent: string;
+  status: "ready";
+  type: "text";
+  createdAt: Date;
+};
+
+function previewText(content: string) {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  return normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized;
+}
+
+function formatDate(date: Date) {
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
 
 export default async function TopicDetail({ params }: PageProps) {
   const { id, topicId } = await params;
@@ -22,9 +45,10 @@ export default async function TopicDetail({ params }: PageProps) {
   const userId = await requireUserId();
   await connectDB();
 
-  const [subject, topic] = await Promise.all([
+  const [subject, topic, resources] = await Promise.all([
     Subject.findOne({ _id: id, userId }).lean(),
     Topic.findOne({ _id: topicId, subjectId: id, userId }).lean(),
+    Resource.find({ topicId, userId }).sort({ createdAt: -1 }).lean<ResourceRow[]>(),
   ]);
 
   if (!subject || !topic) {
@@ -107,18 +131,55 @@ export default async function TopicDetail({ params }: PageProps) {
           </section>
 
           <section>
-            <h2 className="heading-sm text-[#242424] mb-6">Resources</h2>
-            <div className="bg-white p-6 rounded-[12px] border-[1px] border-[#222a3514] shadow-[var(--shadow-level-2)] flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-[#fcfcfc] border-[1px] border-[#222a3514] rounded-[8px] flex items-center justify-center text-[#898989] shadow-[var(--shadow-level-1)] shrink-0">
-                  <FileText size={20} />
-                </div>
-                <div>
-                  <div className="font-medium text-[16px] text-[#242424] mb-1">No resources yet</div>
-                  <div className="text-[12px] font-medium uppercase tracking-wider text-[#898989]">Upload notes in the next slice</div>
+            <div className="flex items-center justify-between gap-4 mb-6">
+              <h2 className="heading-sm text-[#242424]">Resources</h2>
+              <span className="bg-[#f5f5f5] px-2 py-1 rounded-[6px] text-[12px] text-[#242424] font-medium">
+                {resources.length} {resources.length === 1 ? "resource" : "resources"}
+              </span>
+            </div>
+
+            {resources.length > 0 ? (
+              <div className="space-y-4">
+                {resources.map((resource) => (
+                  <div
+                    key={String(resource._id)}
+                    className="bg-white p-6 rounded-[12px] border-[1px] border-[#222a3514] shadow-[var(--shadow-level-2)]"
+                  >
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 bg-[#fcfcfc] border-[1px] border-[#222a3514] rounded-[8px] flex items-center justify-center text-[#898989] shadow-[var(--shadow-level-1)] shrink-0">
+                        <FileText size={20} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-3 mb-2">
+                          <h3 className="font-medium text-[16px] text-[#242424]">{resource.title}</h3>
+                          <span className="bg-[#f5f5f5] px-2 py-1 rounded-[6px] text-[12px] uppercase tracking-wider text-[#242424] font-semibold">
+                            {resource.status}
+                          </span>
+                          <span className="text-[12px] text-[#898989]">
+                            {resource.type.toUpperCase()} &#8226; {formatDate(resource.createdAt)}
+                          </span>
+                        </div>
+                        <p className="text-[14px] font-light text-[#898989] leading-[1.5]">
+                          {previewText(resource.extractedContent)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="bg-white p-6 rounded-[12px] border-[1px] border-[#222a3514] shadow-[var(--shadow-level-2)] flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-[#fcfcfc] border-[1px] border-[#222a3514] rounded-[8px] flex items-center justify-center text-[#898989] shadow-[var(--shadow-level-1)] shrink-0">
+                    <FileText size={20} />
+                  </div>
+                  <div>
+                    <div className="font-medium text-[16px] text-[#242424] mb-1">No resources yet</div>
+                    <div className="text-[12px] font-medium uppercase tracking-wider text-[#898989]">Add typed notes to start building topic context</div>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </section>
         </div>
 

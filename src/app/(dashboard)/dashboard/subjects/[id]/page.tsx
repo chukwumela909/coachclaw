@@ -5,6 +5,7 @@ import { ChevronLeft } from "lucide-react";
 
 import { requireUserId } from "@/lib/auth/require-user";
 import { connectDB } from "@/lib/db/mongoose";
+import { Resource } from "@/models/Resource";
 import { Subject } from "@/models/Subject";
 import { Topic } from "@/models/Topic";
 
@@ -16,6 +17,11 @@ type TopicRow = {
   _id: unknown;
   name: string;
   description?: string;
+};
+
+type ResourceCountRow = {
+  _id: mongoose.Types.ObjectId;
+  count: number;
 };
 
 export default async function SubjectDetail({ params }: PageProps) {
@@ -34,9 +40,19 @@ export default async function SubjectDetail({ params }: PageProps) {
     notFound();
   }
 
-  const topics = await Topic.find({ subjectId: id, userId })
-    .sort({ order: 1, createdAt: 1 })
-    .lean<TopicRow[]>();
+  const [topics, resourceCounts] = await Promise.all([
+    Topic.find({ subjectId: id, userId })
+      .sort({ order: 1, createdAt: 1 })
+      .lean<TopicRow[]>(),
+    Resource.aggregate<ResourceCountRow>([
+      { $match: { userId, subjectId: new mongoose.Types.ObjectId(id) } },
+      { $group: { _id: "$topicId", count: { $sum: 1 } } },
+    ]),
+  ]);
+
+  const resourceCountByTopic = new Map(
+    resourceCounts.map((row) => [row._id.toString(), row.count])
+  );
 
   return (
     <div className="max-w-[1000px] mx-auto p-6 md:p-12">
@@ -68,6 +84,7 @@ export default async function SubjectDetail({ params }: PageProps) {
 
         {topics.map((topic) => {
           const topicId = String(topic._id);
+          const resourceCount = resourceCountByTopic.get(topicId) ?? 0;
 
           return (
             <Link
@@ -81,7 +98,9 @@ export default async function SubjectDetail({ params }: PageProps) {
                     {topic.name}
                   </h3>
                   <div className="flex items-center gap-3 text-[14px] font-light text-[#898989]">
-                    <span className="bg-[#f5f5f5] px-2 py-1 rounded-[6px] text-[#242424] font-medium">0 Resources</span>
+                    <span className="bg-[#f5f5f5] px-2 py-1 rounded-[6px] text-[#242424] font-medium">
+                      {resourceCount} {resourceCount === 1 ? "Resource" : "Resources"}
+                    </span>
                     <span className="text-[#e5e5e5]">&#8226;</span>
                     <span>{topic.description || "Ready for resources, diagnostics, and study guide generation"}</span>
                   </div>
