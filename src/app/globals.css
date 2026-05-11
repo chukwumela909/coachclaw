@@ -11,7 +11,7 @@
 
   /* Fonts */
   --font-cal: var(--font-cal), sans-serif;
-  --font-inter: var(--font-inter), sans-serif;
+  --font-inter: "Segoe UI", sans-serif;
   
   /* Shadows */
   --shadow-level-1: inset 0px 1px 1.9px 0px rgba(0, 0, 0, 0.16);

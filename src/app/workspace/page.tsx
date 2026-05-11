@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -44,7 +44,7 @@ function LoadingScreen() {
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-[#f8f8f8]">
       <div className="text-[14px] text-[#898989] font-medium animate-pulse">
-        Loading workspace…
+        Loading workspace...
       </div>
     </div>
   );
@@ -124,11 +124,6 @@ export default function WorkspacePage() {
 function WorkspaceContent() {
   const searchParams = useSearchParams();
   const roomId = searchParams.get("room");
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-
-  if (!mounted) return <LoadingScreen />;
 
   return (
     <div className="h-screen w-screen relative">

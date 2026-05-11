@@ -1,12 +1,9 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, UploadCloud, FileText, Link2, X, CheckCircle2 } from 'lucide-react';
 
 export default function UploadResources() {
-  const [files, setFiles] = useState<{ name: string; size: string; status: string }[]>([]);
-
   return (
     <div className="max-w-[800px] mx-auto p-6 md:p-12">
       <Link

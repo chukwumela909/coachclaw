@@ -1,9 +1,6 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import localFont from 'next/font/local';
 import './globals.css';
-
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
 const calSans = localFont({
   src: '../fonts/CalSans-SemiBold.woff2',
@@ -23,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${calSans.variable}`}>
+    <html lang="en" className={calSans.variable}>
       <body className="antialiased text-[#242424] bg-white selection:bg-[#0099ff] selection:text-white">
         {children}
       </body>

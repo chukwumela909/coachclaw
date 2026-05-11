@@ -30,7 +30,7 @@ export default function GuestCoachPage() {
               </div>
               <div className="pt-1">
                 <p className="text-[16px] font-light text-[#242424] leading-[1.5]">
-                  Hello! I'm your AI learning coach. What would you like to study today? 
+                  Hello! I&apos;m your AI learning coach. What would you like to study today?
                   You can upload a document, paste a link, or just ask me a question.
                 </p>
               </div>

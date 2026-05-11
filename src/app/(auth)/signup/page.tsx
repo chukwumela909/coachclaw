@@ -13,7 +13,7 @@ export default function SignUpPage() {
         <form
           action={async () => {
             "use server";
-            await signIn("google", { redirectToCallback: () => "/dashboard" });
+            await signIn("google", { redirectTo: "/dashboard" });
           }}
         >
           <button 

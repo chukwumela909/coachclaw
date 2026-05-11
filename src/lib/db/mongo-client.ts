@@ -6,11 +6,13 @@ if (!MONGODB_URI) {
   throw new Error("Please define your MONGODB_URI environment variable");
 }
 
+const mongoUri = MONGODB_URI;
+
 /**
  * MongoDB client with a connection pooling mechanism.
  * This is used by the NextAuth adapter to manage database connections.
  */
-let cachedClient = null;
+let cachedClient: MongoClient | null = null;
 let cachedClientPromise: Promise<MongoClient> | null = null;
 
 export async function getMongoClient() {
@@ -19,7 +21,7 @@ export async function getMongoClient() {
   }
 
   if (!cachedClientPromise) {
-    cachedClientPromise = MongoClient.connect(MONGODB_URI, {
+    cachedClientPromise = MongoClient.connect(mongoUri, {
       // Standard MongoDB connection options
     });
   }
