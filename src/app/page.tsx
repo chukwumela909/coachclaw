@@ -11,7 +11,6 @@ export default function LandingPage() {
           </div>
           <div className="hidden md:flex gap-6 font-medium text-[14px] text-[#898989]">
             <Link href="#features" className="hover:text-[#111111] transition-colors">Features</Link>
-            <Link href="#pricing" className="hover:text-[#111111] transition-colors">Pricing</Link>
             <Link href="/chat" className="hover:text-[#111111] transition-colors">Try Guest Coach</Link>
           </div>
           <div className="flex items-center gap-4">
@@ -105,60 +104,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Pricing Section */}
-      <section id="pricing" className="py-[96px]">
-        <div className="max-w-[1200px] mx-auto px-6 text-center">
-          <h2 className="heading-md text-[#242424] mb-[16px]">Simple, transparent pricing.</h2>
-          <p className="text-[18px] font-light text-[#898989] mb-[48px] max-w-[500px] mx-auto leading-[1.5]">
-            Start free. Upgrade when you need more.
-          </p>
-
-          <div className="grid md:grid-cols-2 gap-6 max-w-[700px] mx-auto">
-            {/* Free Tier */}
-            <div className="bg-white rounded-[12px] shadow-[var(--shadow-level-2)] border-[1px] border-[#222a3514] p-8 text-left">
-              <div className="text-[14px] font-semibold text-[#898989] uppercase tracking-wider mb-2">Free</div>
-              <div className="flex items-end gap-1 mb-6">
-                <span className="font-[var(--font-cal)] font-semibold text-[48px] text-[#242424] leading-none">$0</span>
-                <span className="text-[14px] text-[#898989] font-light mb-2">/month</span>
-              </div>
-              <ul className="space-y-3 text-[14px] text-[#242424] mb-8">
-                <li className="flex items-center gap-2"><span className="text-[#898989]">&#10003;</span> 2 subjects</li>
-                <li className="flex items-center gap-2"><span className="text-[#898989]">&#10003;</span> 5 topics per subject</li>
-                <li className="flex items-center gap-2"><span className="text-[#898989]">&#10003;</span> AI study guides</li>
-                <li className="flex items-center gap-2"><span className="text-[#898989]">&#10003;</span> Guest AI coach</li>
-              </ul>
-              <Link
-                href="/signup"
-                className="block text-center bg-white text-[#242424] px-5 py-[12px] text-[14px] font-semibold rounded-[8px] border-[1px] border-[#222a3514] shadow-[var(--shadow-level-2)] hover:bg-[#f5f5f5] transition-colors"
-              >
-                Get Started
-              </Link>
-            </div>
-
-            {/* Pro Tier */}
-            <div className="bg-[#242424] rounded-[12px] shadow-[var(--shadow-level-2)] p-8 text-left relative overflow-hidden">
-              <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
-              <div className="text-[14px] font-semibold text-[#898989] uppercase tracking-wider mb-2">Pro</div>
-              <div className="flex items-end gap-1 mb-6">
-                <span className="font-[var(--font-cal)] font-semibold text-[48px] text-white leading-none">$12</span>
-                <span className="text-[14px] text-[#898989] font-light mb-2">/month</span>
-              </div>
-              <ul className="space-y-3 text-[14px] text-white/80 mb-8">
-                <li className="flex items-center gap-2"><span className="text-[#0099ff]">&#10003;</span> Unlimited subjects</li>
-                <li className="flex items-center gap-2"><span className="text-[#0099ff]">&#10003;</span> Unlimited topics</li>
-                <li className="flex items-center gap-2"><span className="text-[#0099ff]">&#10003;</span> Voice AI coaching</li>
-                <li className="flex items-center gap-2"><span className="text-[#0099ff]">&#10003;</span> Priority processing</li>
-              </ul>
-              <Link
-                href="/signup"
-                className="block text-center bg-white text-[#242424] px-5 py-[12px] text-[14px] font-semibold rounded-[8px] hover:bg-[#f5f5f5] transition-colors shadow-[var(--shadow-level-2)]"
-              >
-                Start Free Trial
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
     </main>
   );
 }
