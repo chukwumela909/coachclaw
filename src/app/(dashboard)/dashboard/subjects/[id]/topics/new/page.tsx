@@ -84,7 +84,7 @@ export default async function CreateTopic({ params }: PageProps) {
           <div className="space-y-2">
             <label htmlFor="topic-name" className="text-[16px] font-medium text-[#242424] block">Topic Name</label>
             <p className="text-[14px] font-light text-[#898989] mb-4 leading-[1.5]">
-              Name this topic clearly, like Limits and Continuity or Intro to Derivatives.
+              Add one topic manually when you already know exactly what belongs in this course.
             </p>
             <input
               id="topic-name"
@@ -97,9 +97,9 @@ export default async function CreateTopic({ params }: PageProps) {
           </div>
 
           <div className="space-y-2">
-            <label htmlFor="topic-description" className="text-[16px] font-medium text-[#242424] block">Description (Optional)</label>
+            <label htmlFor="topic-description" className="text-[16px] font-medium text-[#242424] block">Description</label>
             <p className="text-[14px] font-light text-[#898989] mb-4 leading-[1.5]">
-              Add notes about what this topic covers. The AI uses this to tailor content.
+              Briefly describe what this topic covers.
             </p>
             <textarea
               id="topic-description"

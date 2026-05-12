@@ -5,6 +5,8 @@ import { Activity, BookOpen, ChevronLeft, ClipboardCheck, Clock, FileText, PlayC
 
 import { requireUserId } from "@/lib/auth/require-user";
 import { connectDB } from "@/lib/db/mongoose";
+import { Progress } from "@/models/Progress";
+import { QuizAttempt } from "@/models/QuizAttempt";
 import { Resource } from "@/models/Resource";
 import { Subject } from "@/models/Subject";
 import { Topic } from "@/models/Topic";
@@ -22,6 +24,18 @@ type ResourceRow = {
   createdAt: Date;
 };
 
+type ProgressRow = {
+  masteryScore: number;
+  quizAttemptCount: number;
+  lastQuizAttemptId?: mongoose.Types.ObjectId;
+  lastStudiedAt?: Date;
+};
+
+type LatestAttemptRow = {
+  _id: unknown;
+  percent: number;
+};
+
 function previewText(content: string) {
   const normalized = content.replace(/\s+/g, " ").trim();
   return normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized;
@@ -32,7 +46,11 @@ function formatDate(date: Date) {
     month: "short",
     day: "numeric",
     year: "numeric",
-  }).format(date);
+    }).format(date);
+}
+
+function formatOptionalDate(date?: Date) {
+  return date ? formatDate(date) : "Not yet";
 }
 
 export default async function TopicDetail({ params }: PageProps) {
@@ -45,15 +63,24 @@ export default async function TopicDetail({ params }: PageProps) {
   const userId = await requireUserId();
   await connectDB();
 
-  const [subject, topic, resources] = await Promise.all([
+  const [subject, topic, resources, progress] = await Promise.all([
     Subject.findOne({ _id: id, userId }).lean(),
     Topic.findOne({ _id: topicId, subjectId: id, userId }).lean(),
     Resource.find({ topicId, userId }).sort({ createdAt: -1 }).lean<ResourceRow[]>(),
+    Progress.findOne({ topicId, userId }).lean<ProgressRow>(),
   ]);
 
   if (!subject || !topic) {
     notFound();
   }
+
+  const latestAttempt = progress?.lastQuizAttemptId
+    ? await QuizAttempt.findOne({ _id: progress.lastQuizAttemptId, topicId, userId })
+        .select("percent")
+        .lean<LatestAttemptRow>()
+    : null;
+  const masteryScore = progress?.masteryScore ?? 0;
+  const attemptCount = progress?.quizAttemptCount ?? 0;
 
   return (
     <div className="max-w-[1000px] mx-auto p-6 md:p-12">
@@ -69,7 +96,7 @@ export default async function TopicDetail({ params }: PageProps) {
         <div>
           <h1 className="heading-lg text-[#242424] mb-2 tracking-tight">{topic.name}</h1>
           <p className="text-[18px] font-light text-[#898989] flex items-center gap-4">
-            Topic Mastery: <span className="font-semibold text-[#242424]">0%</span>
+            Topic Mastery: <span className="font-semibold text-[#242424]">{masteryScore}%</span>
           </p>
         </div>
         <div className="flex flex-wrap gap-3 shrink-0">
@@ -190,22 +217,22 @@ export default async function TopicDetail({ params }: PageProps) {
               <div>
                 <div className="text-[12px] font-bold text-[#898989] uppercase tracking-wider mb-1">Quizzes Taken</div>
                 <div className="flex items-end gap-2 text-[#242424]">
-                  <span className="heading-md leading-none">0</span>
+                  <span className="heading-md leading-none">{attemptCount}</span>
                   <span className="font-medium mb-1">sessions</span>
                 </div>
               </div>
               <div>
-                <div className="text-[12px] font-bold text-[#898989] uppercase tracking-wider mb-1">Average Score</div>
+                <div className="text-[12px] font-bold text-[#898989] uppercase tracking-wider mb-1">Latest Score</div>
                 <div className="flex items-end gap-2 text-[#242424]">
-                  <span className="heading-md leading-none">0</span>
+                  <span className="heading-md leading-none">{latestAttempt?.percent ?? 0}</span>
                   <span className="font-medium mb-1">%</span>
                 </div>
               </div>
               <div>
-                <div className="text-[12px] font-bold text-[#898989] uppercase tracking-wider mb-1">Time Studied</div>
+                <div className="text-[12px] font-bold text-[#898989] uppercase tracking-wider mb-1">Last Studied</div>
                 <div className="flex items-center gap-3 text-[#242424]">
                   <Clock size={24} className="text-[#898989]" />
-                  <span className="font-semibold text-[24px]">0m</span>
+                  <span className="font-semibold text-[20px]">{formatOptionalDate(progress?.lastStudiedAt)}</span>
                 </div>
               </div>
             </div>

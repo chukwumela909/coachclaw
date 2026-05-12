@@ -5,9 +5,11 @@ import { ChevronLeft } from "lucide-react";
 
 import { requireUserId } from "@/lib/auth/require-user";
 import { connectDB } from "@/lib/db/mongoose";
+import { Progress } from "@/models/Progress";
 import { Resource } from "@/models/Resource";
 import { Subject } from "@/models/Subject";
 import { Topic } from "@/models/Topic";
+import { TopicRecommendations } from "./TopicRecommendations";
 
 type PageProps = {
   params: Promise<{ id: string }>;
@@ -22,6 +24,12 @@ type TopicRow = {
 type ResourceCountRow = {
   _id: mongoose.Types.ObjectId;
   count: number;
+};
+
+type ProgressRow = {
+  topicId: mongoose.Types.ObjectId;
+  masteryScore: number;
+  quizAttemptCount: number;
 };
 
 export default async function SubjectDetail({ params }: PageProps) {
@@ -40,7 +48,7 @@ export default async function SubjectDetail({ params }: PageProps) {
     notFound();
   }
 
-  const [topics, resourceCounts] = await Promise.all([
+  const [topics, resourceCounts, progressRows] = await Promise.all([
     Topic.find({ subjectId: id, userId })
       .sort({ order: 1, createdAt: 1 })
       .lean<TopicRow[]>(),
@@ -48,10 +56,16 @@ export default async function SubjectDetail({ params }: PageProps) {
       { $match: { userId, subjectId: new mongoose.Types.ObjectId(id) } },
       { $group: { _id: "$topicId", count: { $sum: 1 } } },
     ]),
+    Progress.find({ userId, subjectId: id })
+      .select("topicId masteryScore quizAttemptCount")
+      .lean<ProgressRow[]>(),
   ]);
 
   const resourceCountByTopic = new Map(
     resourceCounts.map((row) => [row._id.toString(), row.count])
+  );
+  const progressByTopic = new Map(
+    progressRows.map((row) => [row.topicId.toString(), row])
   );
 
   return (
@@ -70,6 +84,11 @@ export default async function SubjectDetail({ params }: PageProps) {
           <p className="text-[18px] font-light text-[#898989] leading-[1.5]">
             {subject.description || "Add topics to start shaping this subject into a learning plan."}
           </p>
+          {subject.goal ? (
+            <p className="mt-3 max-w-[680px] rounded-[8px] bg-[#f5f5f5] px-3 py-2 text-[14px] font-medium leading-[1.5] text-[#57534e]">
+              Goal: {subject.goal}
+            </p>
+          ) : null}
         </div>
         <Link
           href={`/dashboard/subjects/${id}/topics/new`}
@@ -80,11 +99,21 @@ export default async function SubjectDetail({ params }: PageProps) {
       </div>
 
       <div className="space-y-4">
-        <h2 className="heading-sm text-[#242424] mb-6">Topics</h2>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="heading-sm text-[#242424]">Topics</h2>
+        </div>
+
+        <TopicRecommendations
+          subjectId={id}
+          subjectName={subject.name}
+          hasGoal={Boolean(subject.goal)}
+          topicCount={topics.length}
+        />
 
         {topics.map((topic) => {
           const topicId = String(topic._id);
           const resourceCount = resourceCountByTopic.get(topicId) ?? 0;
+          const progress = progressByTopic.get(topicId);
 
           return (
             <Link
@@ -109,12 +138,14 @@ export default async function SubjectDetail({ params }: PageProps) {
                 <div className="flex items-center justify-between sm:justify-end gap-8 bg-[#fcfcfc] p-4 rounded-[8px] border-[1px] border-[#222a3514]">
                   <div className="text-left sm:text-right">
                     <div className="text-[12px] font-medium text-[#898989] mb-1 uppercase tracking-wider">MASTERY</div>
-                    <div className="text-[18px] font-bold text-[#242424]">0%</div>
+                    <div className="text-[18px] font-bold text-[#242424]">{progress?.masteryScore ?? 0}%</div>
                   </div>
                   <div className="w-[1px] h-[32px] bg-[#222a3514]" />
                   <div className="text-left sm:text-right">
-                    <div className="text-[12px] font-medium text-[#898989] mb-1 uppercase tracking-wider">QUESTIONS</div>
-                    <div className="text-[18px] font-bold text-[#242424]">0/0</div>
+                    <div className="text-[12px] font-medium text-[#898989] mb-1 uppercase tracking-wider">ATTEMPTS</div>
+                    <div className="text-[18px] font-bold text-[#242424]">
+                      {progress?.quizAttemptCount ?? 0}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -127,7 +158,7 @@ export default async function SubjectDetail({ params }: PageProps) {
             href={`/dashboard/subjects/${id}/topics/new`}
             className="block border-[2px] border-dashed border-[#e5e5e5] rounded-[12px] p-8 text-center hover:border-[#242424] transition-colors"
           >
-            <span className="font-semibold text-[16px] text-[#898989]">Create your first topic</span>
+            <span className="font-semibold text-[16px] text-[#898989]">Create your first topic manually</span>
           </Link>
         ) : null}
       </div>

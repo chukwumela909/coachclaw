@@ -1,16 +1,15 @@
-import { describe, it, expect } from 'vitest';
-import { User } from '../src/models/User';
-import mongoose from 'mongoose';
+import { describe, expect, it } from "vitest";
 
-describe('User Profile Defaults', () => {
-  it('should assign the default coach name "CoachClaw" when none is provided', async () => {
-    const mockUser = {
-      googleId: 'google-999',
-      email: 'coach@example.com',
-      name: 'Coach User',
-    };
+import { User } from "../src/models/User";
 
-    const user = await User.create(mockUser);
-    expect(user.coachName).toBe('CoachClaw');
+describe("User Profile Defaults", () => {
+  it('assigns the default coach name "CoachClaw" when none is provided', () => {
+    const user = new User({
+      googleId: "google-999",
+      email: "coach@example.com",
+      name: "Coach User",
+    });
+
+    expect(user.coachName).toBe("CoachClaw");
   });
 });

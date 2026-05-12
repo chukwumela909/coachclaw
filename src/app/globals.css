@@ -8,10 +8,13 @@
   --color-mid-gray: #898989;
   --color-light-gray: #f5f5f5;
   --color-link-blue: #0099ff;
+  --color-moss: #355943;
+  --color-parchment: #f8f3ea;
+  --color-amber: #f3b36a;
 
   /* Fonts */
   --font-cal: var(--font-cal), sans-serif;
-  --font-inter: "Segoe UI", sans-serif;
+  --font-body: "Aptos", "Segoe UI", sans-serif;
   
   /* Shadows */
   --shadow-level-1: inset 0px 1px 1.9px 0px rgba(0, 0, 0, 0.16);
@@ -30,7 +33,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-inter);
+  font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -48,7 +51,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .heading-md {
-  font-size: 48px;
+  font-size: clamp(2.5rem, 5vw, 3.5rem);
   line-height: 1.1;
   letter-spacing: 0px;
 }

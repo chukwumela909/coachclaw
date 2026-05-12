@@ -4,6 +4,7 @@ export interface ISubject {
   userId: string;
   name: string;
   description?: string;
+  goal?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -13,6 +14,7 @@ const SubjectSchema = new Schema<ISubject>(
     userId: { type: String, required: true, index: true },
     name: { type: String, required: true, trim: true },
     description: { type: String, trim: true },
+    goal: { type: String, trim: true },
   },
   { timestamps: true }
 );

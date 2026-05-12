@@ -27,6 +27,7 @@ export async function GET() {
         $project: {
           name: 1,
           description: 1,
+          goal: 1,
           createdAt: 1,
           updatedAt: 1,
           topicCount: { $size: "$topics" },
@@ -50,16 +51,18 @@ export async function POST(req: Request) {
     const body = await req.json();
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const description = typeof body.description === "string" ? body.description.trim() : "";
+    const goal = typeof body.goal === "string" ? body.goal.trim() : "";
 
-    if (!name) {
-      return NextResponse.json({ error: "Subject name is required" }, { status: 400 });
+    if (!name || !description || !goal) {
+      return NextResponse.json({ error: "Course name, description, and goal are required" }, { status: 400 });
     }
 
     await connectDB();
     const subject = await Subject.create({
       userId,
       name,
-      description: description || undefined,
+      description,
+      goal,
     });
 
     return NextResponse.json({ subject }, { status: 201 });
